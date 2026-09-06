@@ -1,24 +1,58 @@
 {
-  "candidate": {
-    "name": "Roshan Singh H",
-    "target_roles": [
-      "Junior Data Engineer",
-      "Associate Data Engineer",
-      "Data Engineer Trainee",
-      "Fresher Data Engineer",
-      "ETL Developer"
-    ],
-    "experience_level": "Fresher / Entry Level (0-2 years)",
-    "location_preferences": {
-      "priority_1": "Bangalore, India",
-      "priority_2": "Remote India",
-      "priority_3": "Worldwide Remote"
+  "name": "Roshan Singh H",
+  "title": "Entry-Level Data Engineer | ETL & Snowflake Developer",
+  "email": "roshansingh77de@gmail.com",
+  "location": "Bengaluru, India",
+  "remote_preference": "Open to Remote Roles",
+  "summary": "Entry-level Data Engineer with hands-on experience in SQL, Snowflake, ETL/ELT, cloud data platforms, and data migration. Experienced with SQL Server to Snowflake migration, Azure Data Factory, Azure Blob Storage, AWS S3, Snowflake Streams and Tasks, Snowpipe, SCD Type 1/2, and data warehouse development. Strong foundation in Python, dbt, PySpark, Apache Airflow, and Apache Kafka.",
+  "technical_skills": {
+    "languages": ["Python", "SQL"],
+    "data_engineering": ["ETL/ELT", "Data Pipelines", "Data Migration", "Data Warehousing", "SCD Type 1 & 2", "CDC"],
+    "cloud_platforms": ["Snowflake", "AWS S3", "Azure Blob Storage", "Azure Data Factory (ADF)"],
+    "modern_data_stack": ["dbt", "Apache Airflow", "Apache Kafka", "PySpark"],
+    "snowflake_features": ["Snowpipe", "Streams", "Tasks", "Time Travel", "Zero-Copy Cloning", "Data Sharing", "Stages", "File Formats", "Views", "Stored Procedures"],
+    "databases": ["SQL Server", "MySQL", "PostgreSQL", "Oracle"],
+    "bi_reporting": ["Power BI", "Tableau"],
+    "etl_tools": ["SSIS", "ADF", "Matillion", "dbt"]
+  },
+  "projects": [
+    {
+      "name": "Money Mart – Snowflake Data Migration & ETL",
+      "tech_stack": ["Azure", "Snowflake", "ADF", "SQL"],
+      "details": [
+        "Worked on end-to-end migration of relational data to Snowflake Cloud Data Warehouse.",
+        "Implemented bulk data loading from Azure Blob Storage into Snowflake using external/internal stages and COPY commands.",
+        "Developed ADF-based ETL processes for loading and transforming data into Snowflake.",
+        "Created Snowflake databases, schemas, tables, stages, file formats, views and materialized views for reporting and analytics.",
+        "Used Snowflake Streams and Tasks for incremental data processing, CDC and automated data-loading workflows.",
+        "Worked with SCD Type 1 and Type 2 data-loading concepts and automated task flows.",
+        "Used Zero-Copy Cloning for development and QA environments and supported deployment across environments."
+      ]
     },
-    "core_skills": [
-      "SQL", "Snowflake", "Python", "dbt", "ADF", 
-      "AWS S3", "Azure Blob", "ETL", "SCD Type 2", 
-      "Snowpipe", "Streams", "Tasks"
-    ],
-    "additional_skills": ["Kafka", "Airflow", "PySpark"]
-  }
+    {
+      "name": "Financial Data Mart – Snowflake Data Warehouse (Western Union)",
+      "tech_stack": ["AWS S3", "Snowflake", "SQL"],
+      "details": [
+        "Developed and queried Snowflake data warehouse objects including tables, views, stages, sequences, file formats and procedures.",
+        "Loaded flat-file data from Amazon S3 into Snowflake using external stages and COPY commands.",
+        "Developed complex SQL queries using joins, subqueries, views and Snowflake functions for data analysis.",
+        "Worked with SnowSQL, Snowpipe, Streams, Time Travel, Data Sharing, Secure Views, clustering and database/table cloning.",
+        "Supported SCD implementation and data-loading workflows using Snowflake Streams and related automation features."
+      ]
+    },
+    {
+      "name": "CIT Bank – SQL & ETL Development",
+      "tech_stack": ["SQL Server", "SSIS", "SQL"],
+      "details": [
+        "Developed SQL queries using joins and transformations based on business requirements.",
+        "Participated in ETL development lifecycle activities including requirement gathering, analysis, design, testing and deployment.",
+        "Worked with SSIS-based ETL workflows and supported regression testing and production activities."
+      ]
+    }
+  ],
+  "education": [
+    "Post Graduate Program in Artificial Intelligence & Machine Learning — Great Lakes Institute | Bengaluru",
+    "PGP in Data Science & Engineering — Great Lakes Institute | Bengaluru",
+    "Bachelor of Engineering"
+  ]
 }
