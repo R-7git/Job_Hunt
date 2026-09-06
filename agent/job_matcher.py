@@ -1,6 +1,6 @@
-import requests
 import json
 import re
+import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "qwen2.5:7b"
@@ -8,55 +8,54 @@ MODEL_NAME = "qwen2.5:7b"
 def clean_html(raw_html):
     if not raw_html:
         return ""
-    cleanr = re.compile('<.*?>')
-    return re.sub(cleanr, '', raw_html).strip()
+    clean = re.sub(r'<[^>]+>', ' ', raw_html)
+    return " ".join(clean.split())
 
 def evaluate_job_with_ai(title, company, location, url, description):
-    clean_desc = clean_html(description)[:1200]
-    
-    prompt = f"""
-You are an AI recruiting evaluator scoring fit for an Entry-Level / Fresher candidate seeking Data Engineer, ETL Developer, or Snowflake Developer roles (0-2 years experience).
+    clean_desc = clean_html(description)[:2500]
 
-Candidate Profile:
-- Target Roles: Entry-Level Data Engineer, Junior ETL Developer, Snowflake Developer, Analytics Engineer
-- Core Skills: Python, SQL, Snowflake, ETL/ELT pipelines, dbt, SQL queries, Data Warehousing
+    prompt = f"""You are an expert tech recruiter evaluating entry-level/fresher Data Engineering positions.
+Analyze the following job details and provide a fit score (0-100) and concise reason.
 
-Job Details:
-- Title: {title}
-- Company: {company}
-- Location: {location}
-- Description: {clean_desc}
+Criteria:
+- Must be entry-level, junior, associate, or fresher friendly (<2 years experience).
+- Core tech focus: Data Engineering, ETL/ELT, SQL, Python, Snowflake, dbt.
+- Heavily penalize roles requiring >2-3 years of experience or senior responsibilities.
 
-Evaluation Criteria:
-1. If the job requires 3+ years of experience, score below 40.
-2. If the title or description aligns with Entry/Junior/Associate Data Engineer, ETL, or Snowflake roles, score 75-100.
-3. Prioritize remote-friendly orentry-friendly descriptions.
+Job Title: {title}
+Company: {company}
+Location: {location}
+Description Summary: {clean_desc}
 
-Return ONLY a valid JSON object matching this schema:
-{{
-  "score": <integer from 0 to 100>,
-  "match_reason": "<one sentence justification highlighting entry-level data engineer fit>"
-}}
+Respond strictly in valid JSON with no extra conversational text or markdown codeblocks:
+{{"score": <integer_0_to_100>, "reason": "<one_sentence_explanation>"}}
 """
 
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
+        "stream": False,
         "format": "json",
-        "stream": False
+        "options": {
+            "temperature": 0.2
+        }
     }
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
-        if response.status_code == 200:
-            res_data = response.json()
-            response_text = res_data.get("response", "")
-            data = json.loads(response_text)
+        res = requests.post(OLLAMA_URL, json=payload, timeout=45)
+        if res.status_code == 200:
+            raw_response = res.json().get("response", "").strip()
+            # Clean possible markdown block markers
+            cleaned_json = re.sub(r"^```json\s*", "", raw_response, flags=re.MULTILINE)
+            cleaned_json = re.sub(r"^```\s*", "", cleaned_json, flags=re.MULTILINE).strip()
             
+            data = json.loads(cleaned_json)
             score = int(data.get("score", 0))
-            reason = str(data.get("match_reason", "Evaluated for Entry-Level Data Engineer fit"))
+            reason = str(data.get("reason", "No reason provided."))
             return score, reason
         else:
-            return 0, f"Ollama HTTP error {response.status_code}"
+            print(f"  [Ollama Error] HTTP {res.status_code}")
+            return 0, "Ollama API returned non-200 status."
     except Exception as e:
-        return 0, f"Ollama evaluation failed: {str(e)}"
+        print(f"  [Ollama Exception] {e}")
+        return 0, f"Error communicating with Ollama: {str(e)}"

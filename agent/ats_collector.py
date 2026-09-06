@@ -16,14 +16,12 @@ LEVER_COMPANIES = ["postman", "vercel", "palantir", "figma"]
 ASHBY_COMPANIES = ["notion", "ramp", "replit", "linear", "openai"]
 WORKABLE_COMPANIES = ["sentry", "monzo", "cloudflare"]
 
-# Strictly target entry-level Data Engineer, ETL Developer, Snowflake Developer roles
 TARGET_DATA_KEYWORDS = [
     "data engineer", "data engineering", "etl developer", "etl engineer",
     "snowflake developer", "snowflake engineer", "analytics engineer",
     "junior data engineer", "entry level data engineer", "associate data engineer"
 ]
 
-# Strictly reject Senior, Staff, Lead, Manager, and non-entry/fresher roles
 EXCLUDE_TITLES = [
     "senior", "sr", "sr.", "staff", "principal", "lead", "manager", "director",
     "head of", "architect", "account executive", "sales", "recruiter", "vp",
@@ -57,20 +55,19 @@ def is_job_saved(job_id):
         return cursor.fetchone() is not None
 
 def save_job(job_id, title, company, location, url, description, source):
+    # GUARANTEE: Skip immediately if job is already present in DB
     if is_job_saved(job_id):
         return False
 
     title_lower = title.lower()
 
-    # 1. Strictly exclude senior/lead/management/sales titles
     if any(ex in title_lower for ex in EXCLUDE_TITLES):
         return False
 
-    # 2. Must match target Data Engineer/ETL/Snowflake keywords
     if not any(k in title_lower for k in TARGET_DATA_KEYWORDS):
         return False
 
-    print(f"[{source.UPPER() if hasattr(source, 'UPPER') else source.upper()}] Evaluating match for '{title}' at {company}...")
+    print(f"[{source.upper()}] Evaluating NEW match for '{title}' at {company}...")
     score, reason = evaluate_job_with_ai(title, company, location, url, description)
 
     try:
@@ -83,7 +80,7 @@ def save_job(job_id, title, company, location, url, description, source):
     with sqlite3.connect(DB_PATH, timeout=20.0) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT OR REPLACE INTO jobs (id, title, company, location, url, description, source, match_score, match_reason, status)
+            INSERT OR IGNORE INTO jobs (id, title, company, location, url, description, source, match_score, match_reason, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (str(job_id), str(title), str(company), str(location), str(url), str(description), str(source), score, str(reason), str(status)))
         conn.commit()
@@ -164,8 +161,6 @@ def fetch_workable():
             print(f"Workable error for {company}: {e}")
 
 if __name__ == "__main__":
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
     init_db()
     fetch_greenhouse()
     fetch_lever()

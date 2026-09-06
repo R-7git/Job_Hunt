@@ -2,31 +2,27 @@ import os
 import requests
 from dotenv import load_dotenv
 
-# Load variables from .env file
-load_dotenv()
+load_dotenv(override=True)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram_alert(title: str, company: str, location: str, url: str, score: int, reason: str):
-    if not TELEGRAM_TOKEN or "YOUR_BOT_TOKEN" in TELEGRAM_TOKEN:
-        print("Telegram alert skipped: Bot credentials not configured.")
-        return
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[Telegram Debug] Credentials missing from .env context.")
+        return False
 
     message = f"""🎯 *NEW ENTRY-LEVEL DE MATCH*
 
-📌 *Role:* {title}
 🏢 *Company:* {company}
+📌 *Role:* {title}
 📍 *Location:* {location}
-📊 *Match Score:* {score}/100
+⭐ *Match Score:* {score}/100
+💡 *Reason:* {reason}
 
-💡 *LLM Reason:* {reason}
+🔗 [View Job Posting]({url})"""
 
-🔗 [Apply Here]({url})
-📂 *Document:* Application package generated in `/applications`
-"""
-    
-    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    endpoint = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
@@ -35,13 +31,13 @@ def send_telegram_alert(title: str, company: str, location: str, url: str, score
     }
 
     try:
-        response = requests.post(api_url, json=payload, timeout=10)
-        if response.status_code == 200:
+        res = requests.post(endpoint, json=payload, timeout=10)
+        if res.status_code == 200:
             print(f"Telegram notification sent for {title} at {company}")
             return True
         else:
-            print(f"Telegram API Error ({response.status_code}): {response.text}")
+            print(f"Telegram API Error ({res.status_code}): {res.text}")
             return False
     except Exception as e:
-        print(f"Failed to send Telegram notification: {e}")
+        print(f"[Telegram Exception] {e}")
         return False

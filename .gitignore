@@ -14,5 +14,4 @@ applications/*.md
 # Environment variables
 .env
 
-# Environment variables
-.env
+
