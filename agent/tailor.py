@@ -11,7 +11,7 @@ def generate_tailored_docs():
     cursor = conn.cursor()
     
     # Process ALL jobs marked APPLY
-    cursor.execute("SELECT id, title, company, location, url, description, match_score, reason FROM jobs WHERE status = 'APPLY'")
+    cursor.execute("SELECT id, title, company, location, url, description, match_score, match_reason FROM jobs WHERE status = 'APPLY'")
     jobs = cursor.fetchall()
     
     if not jobs:
