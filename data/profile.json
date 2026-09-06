@@ -1,0 +1,24 @@
+{
+  "candidate": {
+    "name": "Roshan Singh H",
+    "target_roles": [
+      "Junior Data Engineer",
+      "Associate Data Engineer",
+      "Data Engineer Trainee",
+      "Fresher Data Engineer",
+      "ETL Developer"
+    ],
+    "experience_level": "Fresher / Entry Level (0-2 years)",
+    "location_preferences": {
+      "priority_1": "Bangalore, India",
+      "priority_2": "Remote India",
+      "priority_3": "Worldwide Remote"
+    },
+    "core_skills": [
+      "SQL", "Snowflake", "Python", "dbt", "ADF", 
+      "AWS S3", "Azure Blob", "ETL", "SCD Type 2", 
+      "Snowpipe", "Streams", "Tasks"
+    ],
+    "additional_skills": ["Kafka", "Airflow", "PySpark"]
+  }
+}

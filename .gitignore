@@ -1,0 +1,18 @@
+# Environment & Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local Data & Generated Docs
+data/*.db
+applications/*.md
+
+# OS & PM2
+.DS_Store
+.pm2/
+
+# Environment variables
+.env
+
+# Environment variables
+.env

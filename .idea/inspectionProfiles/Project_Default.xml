@@ -1,0 +1,28 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyInterpreterInspection" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="pandas" />
+          <option value="numpy" />
+          <option value="SQLAlchemy" />
+          <option value="pyarrow" />
+          <option value="duckdb" />
+          <option value="transformers" />
+          <option value="sentence-transformers" />
+          <option value="scikit-learn" />
+          <option value="kafka-python-ng" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyStubPackagesCompatibilityInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredStubPackages">
+        <list>
+          <option value="pyspark-stubs" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
