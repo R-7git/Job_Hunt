@@ -11,4 +11,4 @@ applications/*.md
 .pm2/
 
 # Environment variables
-.env
+.envdata/*.db
