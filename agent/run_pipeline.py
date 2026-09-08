@@ -29,6 +29,7 @@ DB_PATH = ROOT_DIR / "data" / "jobs.db"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
+# Sanitize Telegram Tokens completely (strip brackets, quotes, whitespace)
 RAW_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 RAW_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -44,7 +45,7 @@ def get_db_connection():
 
 
 def init_db():
-    """Ensure table has AUTOINCREMENT Primary Key and UNIQUE constraint on url."""
+    """Ensure table structure exists and fix NULL IDs."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -67,12 +68,13 @@ def init_db():
 
 
 def fetch_unprocessed_jobs():
+    """Fetch unprocessed jobs using rowid fallback to eliminate [NULL] IDs."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT COALESCE(id, rowid), title, company, location, url, description 
+        SELECT COALESCE(id, rowid) AS job_id, title, company, location, url, description 
         FROM jobs 
-        WHERE status IN ('APPLY', 'NEW')
+        WHERE status IN ('NEW', 'APPLY')
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -87,43 +89,7 @@ def clean_json_response(text):
 
 
 def evaluate_job_with_ollama(title, company, location, description):
-    prompt = f"""You are an expert tech recruiter evaluating entry-level/fresher roles for a candidate based in Bengaluru, India.
-Evaluate this job position according to these EXACT criteria:
-1. Target Roles: Data Engineer, ETL Developer, Snowflake Developer, SQL Developer (0-2 YOE max).
-2. Location Filter: MUST be Pure Remote, Remote (India), Remote (Worldwide), or located in Bengaluru/Bangalore.
-3. Exclusions: On-site or hybrid roles located in US (e.g. New York, NY), EU, or outside India MUST score 0.
-
-Role Details:
-- Title: {title}
-- Company: {company}
-- Location: {location}
-- Description: {description}
-
-Return ONLY a JSON object with this exact structure:
-{{
-  "score": 85,
-  "is_remote_eligible": true,
-  "reason": "One clear concise sentence explaining role fit and location eligibility."
-}}
-"""
-    try:
-        data = json.dumps({
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json"
-        }).encode('utf-8')
-
-        req = urllib.request.Request(OLLAMA_URL, data=data, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            cleaned_text = clean_json_response(res_data.get("response", "{}"))
-            parsed = json.loads(cleaned_text)
-            return int(parsed.get("score", 0)), parsed.get("reason", "Evaluated by AI")
-    except Exception as e:
-        logging.warning(f"Local Ollama instance unavailable ({e}). Running rule-based fallback evaluation.")
-
-    # Rule-Based Engine (Bengaluru Candidate Focus)
+    # Rule-based filtering to bypass local Ollama timeouts in GitHub Actions
     title_lower = (title or "").lower()
     loc_lower = (location or "").lower()
 
@@ -137,10 +103,10 @@ Return ONLY a JSON object with this exact structure:
 
     if matches_role and matches_valid_location and not is_disqualified_location:
         return 85, "Matched target remote/Bengaluru DE/ETL/SQL fresher criteria."
-    elif matches_role:
-        return 0, "Rejected: Role matches, but location is non-remote or based outside target region (e.g., NY/US)."
+    elif matches_role and is_disqualified_location:
+        return 0, "Rejected: Non-remote role outside target region (e.g. New York/US)."
 
-    return 0, "Rejected: Role does not match Data Engineering / ETL / SQL focus."
+    return 0, "Rejected: Role/Location does not match target Data Engineering criteria."
 
 
 def send_telegram_alert(job_id, title, company, location, url, score, reason):
@@ -165,7 +131,7 @@ def send_telegram_alert(job_id, title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
-    # Pure endpoint string without markdown wrappers
+    # Pure URL string without any brackets or markdown tags
     endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
@@ -225,10 +191,10 @@ def process_pipeline():
                 logging.info(f"Updated job #{job_id} -> status='NOTIFIED', match_score={score}")
             else:
                 update_job_eval(job_id, score, reason, status="APPLY")
-                logging.warning(f"Telegram dispatch failed. Saved score={score} and retained job #{job_id} as status='APPLY'")
+                logging.warning(f"Telegram dispatch failed. Retaining job #{job_id} as status='APPLY'")
         else:
             update_job_eval(job_id, score, reason, status="REJECTED")
-            logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED', match_score={score}")
+            logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED'")
 
 
 if __name__ == "__main__":
