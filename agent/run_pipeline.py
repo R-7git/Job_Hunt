@@ -30,7 +30,7 @@ DB_PATH = ROOT_DIR / "data" / "jobs.db"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
-# Clean token and chat ID of any extra quotes, brackets, or spaces
+# Extract strictly valid tokens from environment variables
 RAW_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 RAW_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -96,7 +96,6 @@ Return ONLY a JSON object with this exact structure:
     except Exception as e:
         logging.warning(f"Local Ollama instance unavailable ({e}). Using GitHub Actions fallback score.")
 
-    # Fallback score to ensure pipeline dispatches alert in cloud environment
     return 85, "Matched entry-level job posting criteria."
 
 
@@ -121,7 +120,7 @@ def send_telegram_alert(title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
-    # Clean endpoint URL string without Markdown formatting artifacts
+    # Clean URL construction without Markdown brackets
     endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
@@ -155,7 +154,6 @@ def update_job_status(job_id, score, status):
 
 
 def process_pipeline():
-    # 1. Execute live scraping logic first
     if callable(run_job_collector):
         logging.info("Starting job collection step...")
         try:
@@ -165,11 +163,9 @@ def process_pipeline():
     else:
         logging.warning("No valid run_job_collector module detected. Proceeding with DB check.")
 
-    # 2. Fetch newly inserted or pending jobs
     jobs = fetch_unprocessed_jobs()
     logging.info(f"Found {len(jobs)} unprocessed jobs with status 'APPLY' or 'NEW'")
 
-    # 3. Process records and issue notifications
     for job in jobs:
         job_id, title, company, location, url, description = job
         logging.info(f"Processing: {title} at {company}")
@@ -187,7 +183,3 @@ def process_pipeline():
         else:
             update_job_status(job_id, score, status="REJECTED")
             logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED'")
-
-
-if __name__ == "__main__":
-    process_pipeline()
