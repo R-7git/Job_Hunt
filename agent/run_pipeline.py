@@ -43,6 +43,29 @@ def get_db_connection():
     return sqlite3.connect(DB_PATH)
 
 
+def init_db():
+    """Ensure table has AUTOINCREMENT Primary Key and UNIQUE constraint on url."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            company TEXT,
+            location TEXT,
+            url TEXT UNIQUE,
+            description TEXT,
+            source TEXT,
+            match_score INTEGER,
+            match_reason TEXT,
+            status TEXT DEFAULT 'NEW',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
 def fetch_unprocessed_jobs():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -64,11 +87,11 @@ def clean_json_response(text):
 
 
 def evaluate_job_with_ollama(title, company, location, description):
-    prompt = f"""You are an expert tech recruiter evaluating remote entry-level roles.
+    prompt = f"""You are an expert tech recruiter evaluating entry-level/fresher roles for a candidate based in Bengaluru, India.
 Evaluate this job position according to these EXACT criteria:
-1. Target Roles: Data Engineer, ETL Developer, Snowflake Developer, SQL Developer (or closely related entry-level / fresher roles).
-2. Experience: Fresher / Entry-Level / Junior (0-2 YOE max).
-3. Location: MUST be Pure Remote, Remote (India), or Remote (Worldwide / Anywhere). On-site or hybrid in US/EU without remote eligibility must score 0.
+1. Target Roles: Data Engineer, ETL Developer, Snowflake Developer, SQL Developer (0-2 YOE max).
+2. Location Filter: MUST be Pure Remote, Remote (India), Remote (Worldwide), or located in Bengaluru/Bangalore.
+3. Exclusions: On-site or hybrid roles located in US (e.g. New York, NY), EU, or outside India MUST score 0.
 
 Role Details:
 - Title: {title}
@@ -80,7 +103,7 @@ Return ONLY a JSON object with this exact structure:
 {{
   "score": 85,
   "is_remote_eligible": true,
-  "reason": "One clear concise sentence explaining fit and remote status."
+  "reason": "One clear concise sentence explaining role fit and location eligibility."
 }}
 """
     try:
@@ -100,25 +123,27 @@ Return ONLY a JSON object with this exact structure:
     except Exception as e:
         logging.warning(f"Local Ollama instance unavailable ({e}). Running rule-based fallback evaluation.")
 
-    # Fallback Evaluation Engine (Strict Remote + Role Matching for GitHub Actions)
+    # Rule-Based Engine (Bengaluru Candidate Focus)
     title_lower = (title or "").lower()
     loc_lower = (location or "").lower()
 
     valid_roles = ["data engineer", "etl", "snowflake", "sql", "data platform", "pipeline"]
-    valid_locations = ["remote", "anywhere", "worldwide", "india", "work from home"]
+    valid_locations = ["remote", "anywhere", "worldwide", "india", "work from home", "bengaluru", "bangalore"]
+    invalid_locations = ["new york", "ny", "san francisco", "london", "uk", "us", "united states", "hybrid"]
 
     matches_role = any(r in title_lower for r in valid_roles)
-    matches_remote = any(l in loc_lower for l in valid_locations)
+    is_disqualified_location = any(loc in loc_lower for loc in invalid_locations) and not any(r in loc_lower for r in ["remote", "india"])
+    matches_valid_location = any(l in loc_lower for l in valid_locations)
 
-    if matches_role and matches_remote:
-        return 85, "Matched target remote DE/ETL/SQL fresher position criteria."
+    if matches_role and matches_valid_location and not is_disqualified_location:
+        return 85, "Matched target remote/Bengaluru DE/ETL/SQL fresher criteria."
     elif matches_role:
-        return 30, "Position matched target role but failed Remote/Remote-India location filter."
+        return 0, "Rejected: Role matches, but location is non-remote or based outside target region (e.g., NY/US)."
 
-    return 0, "Role does not match Data Engineering / ETL / SQL focus."
+    return 0, "Rejected: Role does not match Data Engineering / ETL / SQL focus."
 
 
-def send_telegram_alert(title, company, location, url, score, reason):
+def send_telegram_alert(job_id, title, company, location, url, score, reason):
     if not TOKEN or not CHAT_ID:
         logging.error(f"Missing Credentials -> TOKEN: '{TOKEN}' | CHAT_ID: '{CHAT_ID}'")
         return False
@@ -130,7 +155,8 @@ def send_telegram_alert(title, company, location, url, score, reason):
     clean_url = html.escape(str(url or ""))
 
     message = (
-        f"🎯 <b>New Remote Fresher Job Found!</b>\n\n"
+        f"🎯 <b>New Job Match Found!</b>\n\n"
+        f"<b>Job ID:</b> #{job_id}\n"
         f"<b>Role:</b> {clean_title}\n"
         f"<b>Company:</b> {clean_company}\n"
         f"<b>Location:</b> {clean_location}\n"
@@ -139,7 +165,6 @@ def send_telegram_alert(title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
-    # DIRECT CLEAN ENDPOINT STRING - Fixed Markdown artifacts
     endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
@@ -151,41 +176,36 @@ def send_telegram_alert(title, company, location, url, score, reason):
     try:
         req = urllib.request.Request(endpoint, data=payload, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=10) as response:
-            res_body = response.read().decode('utf-8')
             if response.status == 200:
-                logging.info(f"Telegram alert delivered for: {title}")
+                logging.info(f"Telegram alert delivered for Job #{job_id}: {title}")
                 return True
-    except urllib.error.HTTPError as e:
-        err_response = e.read().decode('utf-8')
-        logging.error(f"Telegram API HTTP Error {e.code}: {err_response}")
-        return False
     except Exception as e:
-        logging.error(f"Telegram request failed [{endpoint}]: {e}")
+        logging.error(f"Telegram request failed for Job #{job_id}: {e}")
         return False
     return False
 
 
-def update_job_status(job_id, score, status):
+def update_job_eval(job_id, score, reason, status):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE jobs 
-        SET match_score = ?, status = ? 
+        SET match_score = ?, match_reason = ?, status = ? 
         WHERE COALESCE(id, rowid) = ?
-    """, (score, status, job_id))
+    """, (score, reason, status, job_id))
     conn.commit()
     conn.close()
 
 
 def process_pipeline():
+    init_db()
+
     if callable(run_job_collector):
         logging.info("Starting job collection step...")
         try:
             run_job_collector()
         except Exception as e:
             logging.error(f"Error executing job collector: {e}")
-    else:
-        logging.warning("No valid run_job_collector module detected. Proceeding with DB check.")
 
     jobs = fetch_unprocessed_jobs()
     logging.info(f"Found {len(jobs)} unprocessed jobs with status 'APPLY' or 'NEW'")
@@ -198,15 +218,16 @@ def process_pipeline():
         logging.info(f"Evaluation -> Score: {score} | Reason: {reason}")
 
         if score >= 60:
-            alert_sent = send_telegram_alert(title, company, location, url, score, reason)
+            alert_sent = send_telegram_alert(job_id, title, company, location, url, score, reason)
             if alert_sent:
-                update_job_status(job_id, score, status="NOTIFIED")
-                logging.info(f"Updated job #{job_id} -> status='NOTIFIED'")
+                update_job_eval(job_id, score, reason, status="NOTIFIED")
+                logging.info(f"Updated job #{job_id} -> status='NOTIFIED', match_score={score}")
             else:
-                logging.warning(f"Telegram dispatch failed. Retaining job #{job_id} as status='APPLY'")
+                update_job_eval(job_id, score, reason, status="APPLY")
+                logging.warning(f"Telegram dispatch failed. Saved score={score} and retained job #{job_id} as status='APPLY'")
         else:
-            update_job_status(job_id, score, status="REJECTED")
-            logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED'")
+            update_job_eval(job_id, score, reason, status="REJECTED")
+            logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED', match_score={score}")
 
 
 if __name__ == "__main__":
