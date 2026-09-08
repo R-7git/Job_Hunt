@@ -1,15 +1,13 @@
 import os
-import re
 import requests
 import dotenv
 
 dotenv.load_dotenv()
 
-def send_job_alerts(matched_jobs: list):
+def send_job_alerts(matched_jobs: list) -> list:
     raw_token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN") or ""
     chat_id = os.getenv("TELEGRAM_CHAT_ID") or ""
 
-    # Strip whitespace, quotes, and accidental "bot" prefixes
     token = raw_token.strip().strip("'").strip('"')
     if token.lower().startswith("bot"):
         token = token[3:]
@@ -17,12 +15,14 @@ def send_job_alerts(matched_jobs: list):
     chat_id = chat_id.strip().strip("'").strip('"')
 
     if not token or not chat_id:
-        print("⚠️ Telegram credentials missing. Skipping notification.")
-        return
+        print("⚠️ Telegram credentials missing or invalid in .env file.")
+        return []
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    successful_ids = []
 
     for job in matched_jobs:
+        job_id = job.get("id")
         title = job.get("title")
         company = job.get("company")
         location = job.get("location")
@@ -50,9 +50,11 @@ def send_job_alerts(matched_jobs: list):
         try:
             resp = requests.post(url, json=payload, timeout=10)
             if resp.status_code == 200:
-                print(f"✅ Telegram alert sent: {title} @ {company}")
+                print(f"✅ Telegram alert delivered: {title} @ {company}")
+                successful_ids.append(job_id)
             else:
-                print(f"❌ Telegram Error ({resp.status_code}): {resp.text}")
-                print(f"   [Debug URL Used]: https://api.telegram.org/bot{token[:5]}.../sendMessage")
+                print(f"❌ Telegram Delivery Error ({resp.status_code}): {resp.text}")
         except Exception as e:
-            print(f"❌ Notification Error: {e}")
+            print(f"❌ Notification Request Exception: {e}")
+
+    return successful_ids

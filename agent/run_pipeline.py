@@ -14,6 +14,8 @@ def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+    
+    # Create main table with status tracking column
     cur.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             id TEXT PRIMARY KEY,
@@ -25,6 +27,7 @@ def init_db():
             summary TEXT,
             fit_score REAL,
             match_reason TEXT,
+            status TEXT DEFAULT 'REJECTED',
             scouted_at TEXT
         )
     """)
@@ -41,7 +44,6 @@ def is_excluded(title: str, summary: str) -> tuple[bool, str]:
     title_lower = title.lower()
     summary_lower = (summary or "").lower()
 
-    # Immediate Exclusions: Senior roles or non-target tech stack (Java)
     senior_terms = ["senior", "sr.", "sr ", "lead", "staff", "principal", "architect", "manager", "director", "head of", "vp"]
     if any(s in title_lower for s in senior_terms):
         return True, "Excluded: Senior/Lead Role"
@@ -53,10 +55,8 @@ def is_excluded(title: str, summary: str) -> tuple[bool, str]:
 
 def evaluate_job(title: str, location: str, summary: str, profile: dict) -> tuple[float, str]:
     title_lower = title.lower()
-    loc_lower = (location or "").lower()
     summary_lower = (summary or "").lower()
 
-    # Target Keywords for Data Eng / SQL / Snowflake / ETL
     target_keywords = [
         "data engineer", "data engineering", "sql", "snowflake", 
         "etl", "elt", "data pipeline", "analytics engineer", 
@@ -70,7 +70,6 @@ def evaluate_job(title: str, location: str, summary: str, profile: dict) -> tupl
     score = 60.0
     reasons = ["Matched target data domain."]
 
-    # Check candidate skills
     skills_to_check = ["sql", "snowflake", "etl", "python", "aws", "s3", "azure", "adf", "dbt", "pyspark", "airflow"]
     matched_skills = [skill for skill in skills_to_check if skill in summary_lower or skill in title_lower]
 
@@ -94,9 +93,7 @@ def fetch_and_evaluate():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    new_matches = []
     processed_ids = set()
-
     print(f"\n--- Scraped {len(fetched_jobs)} total job postings ---")
 
     for job in fetched_jobs:
@@ -105,6 +102,11 @@ def fetch_and_evaluate():
             continue
         processed_ids.add(job_id)
 
+        # Optimization: Skip evaluation entirely if job ID already exists in DB
+        cur.execute("SELECT status FROM jobs WHERE id = ?", (job_id,))
+        if cur.fetchone():
+            continue
+
         title = job.get("title", "")
         company = job.get("company", "")
         location = job.get("location", "Remote")
@@ -112,48 +114,64 @@ def fetch_and_evaluate():
         source = job.get("source", "ATS")
         summary = job.get("summary", "")
 
-        # Step 1: Immediate Fast-Fail Pre-Filter (Drops Senior and Java jobs instantly)
+        # Fast-Fail Filter: Instantly drop senior/java roles
         excluded, reason = is_excluded(title, summary)
         if excluded:
             print(f"[{source}] {company} - {title} => SKIPPED ({reason})")
+            cur.execute("""
+                INSERT OR IGNORE INTO jobs (id, title, company, location, url, source, summary, fit_score, match_reason, status, scouted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'REJECTED', ?)
+            """, (job_id, title, company, location, url, source, summary, 0.0, reason, datetime.now(timezone.utc).isoformat()))
             continue
 
-        # Step 2: Database Deduplication Check
-        cur.execute("SELECT id FROM jobs WHERE id = ?", (job_id,))
-        if cur.fetchone():
-            continue
-
-        # Step 3: Evaluate & Score
+        # Evaluate score
         fit_score, match_reason = evaluate_job(title, location, summary, profile)
+        status = "PENDING" if fit_score >= 50.0 else "REJECTED"
 
         cur.execute("""
-            INSERT OR IGNORE INTO jobs (id, title, company, location, url, source, summary, fit_score, match_reason, scouted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO jobs (id, title, company, location, url, source, summary, fit_score, match_reason, status, scouted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            job_id, title, company, location, url, source, summary, fit_score, match_reason,
+            job_id, title, company, location, url, source, summary, fit_score, match_reason, status,
             datetime.now(timezone.utc).isoformat()
         ))
 
-        print(f"[{source}] {company} - {title} => Score: {fit_score} ({match_reason})")
-
-        if fit_score >= 50.0:
-            new_matches.append({
-                "title": title,
-                "company": company,
-                "location": location,
-                "url": url,
-                "fit_score": fit_score,
-                "match_reason": match_reason
-            })
+        print(f"[{source}] {company} - {title} => Score: {fit_score} | Status: {status}")
 
     conn.commit()
-    conn.close()
 
-    print(f"\nPipeline execution complete: {len(new_matches)} qualified fresher matches found.")
+    # Query only jobs that need to be notified
+    cur.execute("SELECT id, title, company, location, url, fit_score, match_reason FROM jobs WHERE status = 'PENDING'")
+    pending_jobs = cur.fetchall()
 
-    if new_matches:
+    if pending_jobs:
+        print(f"\nFound {len(pending_jobs)} new matching jobs to send to Telegram...")
         from agent.telegram_notify import send_job_alerts
-        send_job_alerts(new_matches)
+        
+        # Convert tuple query results into standard dict format for notifier
+        jobs_to_notify = [
+            {
+                "id": row[0],
+                "title": row[1],
+                "company": row[2],
+                "location": row[3],
+                "url": row[4],
+                "fit_score": row[5],
+                "match_reason": row[6]
+            }
+            for row in pending_jobs
+        ]
+
+        # Send alerts and receive list of successfully notified IDs
+        notified_ids = send_job_alerts(jobs_to_notify)
+
+        # Update status to NOTIFIED in database
+        for j_id in notified_ids:
+            cur.execute("UPDATE jobs SET status = 'NOTIFIED' WHERE id = ?", (j_id,))
+        conn.commit()
+
+    conn.close()
+    print("\nPipeline execution complete.")
 
 if __name__ == "__main__":
     fetch_and_evaluate()
