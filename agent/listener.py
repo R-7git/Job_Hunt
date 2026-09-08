@@ -1,7 +1,6 @@
 import os
 import sqlite3
 import logging
-import requests
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,7 +35,6 @@ def run_job_collector():
     logging.info("Starting live job collection phase...")
     init_db()
 
-    # Sample mock scraper payload / replacement target for live APIs
     sample_jobs = [
         {
             "title": "Entry Level Data Engineer",
@@ -59,15 +57,12 @@ def run_job_collector():
     inserted_count = 0
 
     for job in sample_jobs:
-        try:
-            cursor.execute("""
-                INSERT INTO jobs (title, company, location, url, description, status)
-                VALUES (?, ?, ?, ?, ?, 'NEW')
-            """, (job["title"], job["company"], job["location"], job["url"], job["description"]))
+        cursor.execute("""
+            INSERT OR IGNORE INTO jobs (title, company, location, url, description, status)
+            VALUES (?, ?, ?, ?, ?, 'NEW')
+        """, (job["title"], job["company"], job["location"], job["url"], job["description"]))
+        if cursor.rowcount > 0:
             inserted_count += 1
-        except sqlite3.IntegrityError:
-            # Skip duplicates based on unique URL
-            pass
 
     conn.commit()
     conn.close()
