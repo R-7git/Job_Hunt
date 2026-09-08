@@ -115,7 +115,7 @@ Return ONLY a JSON object with this exact structure:
         }).encode('utf-8')
 
         req = urllib.request.Request(OLLAMA_URL, data=data, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             res_data = json.loads(response.read().decode('utf-8'))
             cleaned_text = clean_json_response(res_data.get("response", "{}"))
             parsed = json.loads(cleaned_text)
@@ -165,6 +165,7 @@ def send_telegram_alert(job_id, title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
+    # Pure endpoint string without markdown wrappers
     endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
