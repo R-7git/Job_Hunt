@@ -94,6 +94,23 @@ def evaluate_job(title: str, location: str, summary: str, profile: dict) -> tupl
     return round(score, 2), " | ".join(reasons)
 
 
+def prune_old_rejected_jobs():
+    """Wipes heavy text descriptions (summary) for REJECTED jobs older than 30 days to save cloud space without breaking scraper deduplication."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE jobs 
+            SET summary = NULL 
+            WHERE status = 'REJECTED' 
+              AND scouted_at < datetime('now', '-30 days')
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Cleanup warning: {e}")
+
+
 def fetch_and_evaluate():
     init_db()
     profile = load_profile()
@@ -199,25 +216,12 @@ def fetch_and_evaluate():
             cur.execute("UPDATE jobs SET status = 'NOTIFIED' WHERE id = ?", (j_id,))
         conn.commit()
 
+    # Execute database maintenance routine
+    prune_old_rejected_jobs()
+
     conn.close()
     print("\nPipeline execution complete.")
 
 
 if __name__ == "__main__":
     fetch_and_evaluate()
-
-def prune_old_rejected_jobs():
-    """Wipes heavy text descriptions for REJECTED jobs older than 30 days to save cloud space without breaking scraper deduplication."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE jobs 
-            SET description = NULL 
-            WHERE status = "REJECTED" 
-              AND scouted_at < datetime("now", "-30 days")
-        """)
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Cleanup warning: {e}")
