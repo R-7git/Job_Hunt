@@ -28,10 +28,10 @@ def run_scheduled_pipeline():
     os.chdir("/root/project")
     sys.path.append("/root/project")
 
-    from agent.run_pipeline import process_pipeline
+    from agent.run_pipeline import fetch_and_evaluate
     
     print("Starting Modal cloud execution...")
-    process_pipeline()
+    fetch_and_evaluate()
     
     # Commit changes to persistent storage
     data_volume.commit()

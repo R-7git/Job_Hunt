@@ -12,3 +12,5 @@ applications/*.md
 
 # Environment variables
 .envdata/*.db
+data/jobs.db
+*.db
