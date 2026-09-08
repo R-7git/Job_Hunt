@@ -2,15 +2,16 @@ import modal
 
 app = modal.App("job-hunt-pipeline")
 
-# Create a persistent volume to store jobs.db across cloud runs
+# Persistent volume for the SQLite DB
 data_volume = modal.Volume.from_name("job-hunt-db", create_if_missing=True)
 
-# Install all necessary dependencies for scraping and execution
+# Container image with dependencies
 image = (
     modal.Image.debian_slim()
     .pip_install("requests", "python-dotenv", "beautifulsoup4", "lxml")
     .add_local_dir(".", remote_path="/root/project")
 )
+
 
 @app.function(
     image=image,
@@ -18,10 +19,10 @@ image = (
         modal.Secret.from_name("telegram-secrets")
     ],
     volumes={
-        "/root/project/data": data_volume  # Persists jobs.db
+        "/data": data_volume  # Mounts to a dedicated directory
     },
     schedule=modal.Cron("*/15 * * * *"),
-    timeout=600  # Sets timeout to 10 minutes
+    timeout=600
 )
 def run_scheduled_pipeline():
     import sys
@@ -30,11 +31,17 @@ def run_scheduled_pipeline():
     os.chdir("/root/project")
     sys.path.append("/root/project")
 
+    # Set database path environment variable to the persistent volume path
+    os.environ["DB_PATH"] = "/data/jobs.db"
+
+    # Reload the volume first to pull any existing database state
+    data_volume.reload()
+
     from agent.run_pipeline import fetch_and_evaluate
-    
+
     print("Starting Modal cloud execution...")
     fetch_and_evaluate()
-    
-    # Commit changes to persistent storage
+
+    # Commit changes to persist SQLite updates to cloud storage
     data_volume.commit()
     print("Modal cloud execution finished and DB saved.")
