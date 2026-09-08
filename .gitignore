@@ -4,7 +4,6 @@ __pycache__/
 *.pyc
 
 # Local Data & Generated Docs
-data/*.db
 applications/*.md
 
 # OS & PM2
@@ -13,5 +12,3 @@ applications/*.md
 
 # Environment variables
 .env
-
-
