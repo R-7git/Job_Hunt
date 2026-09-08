@@ -1,20 +1,25 @@
 import json
 import os
 import sqlite3
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 import dotenv
+
+from agent.scrapers import scrape_all_sources
+from agent.ats_collector import fetch_all_jobs
 
 dotenv.load_dotenv()
 
 DB_PATH = Path("data/jobs.db")
 PROFILE_PATH = Path("data/profile.json")
 
+
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    
+
     # Create main table with status tracking column
     cur.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
@@ -34,17 +39,20 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def load_profile():
     if not PROFILE_PATH.exists():
         return {}
     with open(PROFILE_PATH, "r") as f:
         return json.load(f)
 
+
 def is_excluded(title: str, summary: str) -> tuple[bool, str]:
     title_lower = title.lower()
     summary_lower = (summary or "").lower()
 
-    senior_terms = ["senior", "sr.", "sr ", "lead", "staff", "principal", "architect", "manager", "director", "head of", "vp"]
+    senior_terms = ["senior", "sr.", "sr ", "lead", "staff", "principal", "architect", "manager", "director", "head of",
+                    "vp"]
     if any(s in title_lower for s in senior_terms):
         return True, "Excluded: Senior/Lead Role"
 
@@ -53,13 +61,14 @@ def is_excluded(title: str, summary: str) -> tuple[bool, str]:
 
     return False, ""
 
+
 def evaluate_job(title: str, location: str, summary: str, profile: dict) -> tuple[float, str]:
     title_lower = title.lower()
     summary_lower = (summary or "").lower()
 
     target_keywords = [
-        "data engineer", "data engineering", "sql", "snowflake", 
-        "etl", "elt", "data pipeline", "analytics engineer", 
+        "data engineer", "data engineering", "sql", "snowflake",
+        "etl", "elt", "data pipeline", "analytics engineer",
         "data warehouse", "bi engineer"
     ]
     title_matched = any(kw in title_lower for kw in target_keywords)
@@ -77,18 +86,37 @@ def evaluate_job(title: str, location: str, summary: str, profile: dict) -> tupl
         score += min(len(matched_skills) * 5, 30)
         reasons.append(f"Skills: {', '.join(matched_skills[:5])}")
 
-    if any(e in title_lower or e in summary_lower for e in ["entry", "fresher", "junior", "associate", "intern", "trainee"]):
+    if any(e in title_lower or e in summary_lower for e in
+           ["entry", "fresher", "junior", "associate", "intern", "trainee"]):
         score += 10
         reasons.append("Fresher/Entry level indicator found.")
 
     return round(score, 2), " | ".join(reasons)
 
+
 def fetch_and_evaluate():
     init_db()
     profile = load_profile()
 
-    from agent.ats_collector import fetch_all_jobs
+    # Collect jobs from existing ATS collector + new global sources
     fetched_jobs = fetch_all_jobs()
+    global_jobs = scrape_all_sources()
+
+    # Map global jobs to match pipeline dict structure
+    for job in global_jobs:
+        raw_url = job.get("url", "")
+        # Generate a unique hash ID if no native ID exists
+        job_id = hashlib.md5(raw_url.encode("utf-8")).hexdigest() if raw_url else None
+
+        fetched_jobs.append({
+            "id": job_id,
+            "title": job.get("title", ""),
+            "company": job.get("company", ""),
+            "location": job.get("location", "Remote"),
+            "url": raw_url,
+            "source": job.get("source", "Global Scraper"),
+            "summary": job.get("description", "")
+        })
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -98,7 +126,7 @@ def fetch_and_evaluate():
 
     for job in fetched_jobs:
         job_id = str(job.get("id"))
-        if not job_id or job_id in processed_ids:
+        if not job_id or job_id == "None" or job_id in processed_ids:
             continue
         processed_ids.add(job_id)
 
@@ -121,7 +149,8 @@ def fetch_and_evaluate():
             cur.execute("""
                 INSERT OR IGNORE INTO jobs (id, title, company, location, url, source, summary, fit_score, match_reason, status, scouted_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'REJECTED', ?)
-            """, (job_id, title, company, location, url, source, summary, 0.0, reason, datetime.now(timezone.utc).isoformat()))
+            """, (job_id, title, company, location, url, source, summary, 0.0, reason,
+                  datetime.now(timezone.utc).isoformat()))
             continue
 
         # Evaluate score
@@ -147,7 +176,7 @@ def fetch_and_evaluate():
     if pending_jobs:
         print(f"\nFound {len(pending_jobs)} new matching jobs to send to Telegram...")
         from agent.telegram_notify import send_job_alerts
-        
+
         # Convert tuple query results into standard dict format for notifier
         jobs_to_notify = [
             {
@@ -172,6 +201,7 @@ def fetch_and_evaluate():
 
     conn.close()
     print("\nPipeline execution complete.")
+
 
 if __name__ == "__main__":
     fetch_and_evaluate()
