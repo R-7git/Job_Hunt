@@ -6,6 +6,7 @@ import json
 import re
 import html
 import urllib.request
+import urllib.error
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -45,7 +46,6 @@ def get_db_connection():
 def fetch_unprocessed_jobs():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # rowid fallback handles databases where 'id' column was inserted as NULL
     cursor.execute("""
         SELECT COALESCE(id, rowid), title, company, location, url, description 
         FROM jobs 
@@ -139,7 +139,7 @@ def send_telegram_alert(title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
-    # DIRECT CLEAN ENDPOINT - No markdown brackets
+    # DIRECT CLEAN ENDPOINT STRING - Fixed Markdown artifacts
     endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
@@ -155,6 +155,10 @@ def send_telegram_alert(title, company, location, url, score, reason):
             if response.status == 200:
                 logging.info(f"Telegram alert delivered for: {title}")
                 return True
+    except urllib.error.HTTPError as e:
+        err_response = e.read().decode('utf-8')
+        logging.error(f"Telegram API HTTP Error {e.code}: {err_response}")
+        return False
     except Exception as e:
         logging.error(f"Telegram request failed [{endpoint}]: {e}")
         return False
@@ -164,7 +168,6 @@ def send_telegram_alert(title, company, location, url, score, reason):
 def update_job_status(job_id, score, status):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Update using COALESCE(id, rowid) so null IDs still get updated
     cursor.execute("""
         UPDATE jobs 
         SET match_score = ?, status = ? 
