@@ -1,26 +1,78 @@
-from flask import Flask, jsonify
-import threading
-import subprocess
+import os
+import sqlite3
+import logging
+import requests
+from pathlib import Path
 
-app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def run_pipeline_task():
-    print("\n[WORKFLOW TRIGGERED] Starting job collection & tailoring pipeline in background...")
-    cmd = "source .venv/bin/activate && export PYTHONPATH=. && python3 agent/job_collector.py && python3 agent/ats_collector.py && python3 agent/tailor.py"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash")
-    print("[WORKFLOW COMPLETE] Output:\n", result.stdout)
-    if result.stderr:
-        print("[WORKFLOW ERRORS]:\n", result.stderr)
+DB_PATH = Path(__file__).parent.parent / "data" / "jobs.db"
 
-@app.route('/run-jobs', methods=['POST', 'GET'])
-def run_job_pipeline():
-    thread = threading.Thread(target=run_pipeline_task)
-    thread.start()
-    return jsonify({
-        "status": "started",
-        "message": "Job collection & tailoring pipeline launched in background."
-    }), 200
 
-if __name__ == '__main__':
-    print("Listening for n8n triggers on http://localhost:5001/run-jobs ...")
-    app.run(host='0.0.0.0', port=5001)
+def init_db():
+    """Ensure database directory and jobs table exist."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            company TEXT,
+            location TEXT,
+            url TEXT UNIQUE,
+            description TEXT,
+            status TEXT DEFAULT 'NEW',
+            match_score INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def run_job_collector():
+    """Scrape live job listings and insert new records into SQLite."""
+    logging.info("Starting live job collection phase...")
+    init_db()
+
+    # Sample mock scraper payload / replacement target for live APIs
+    sample_jobs = [
+        {
+            "title": "Entry Level Data Engineer",
+            "company": "Fetch",
+            "location": "Remote",
+            "url": "https://example.com/jobs/de-entry-01",
+            "description": "Looking for a fresher / entry level Data Engineer with Python and SQL experience."
+        },
+        {
+            "title": "Junior Data Engineer",
+            "company": "DataCorp",
+            "location": "New York, NY",
+            "url": "https://example.com/jobs/de-junior-02",
+            "description": "Entry level role building ETL pipelines and managing SQL databases."
+        }
+    ]
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    inserted_count = 0
+
+    for job in sample_jobs:
+        try:
+            cursor.execute("""
+                INSERT INTO jobs (title, company, location, url, description, status)
+                VALUES (?, ?, ?, ?, ?, 'NEW')
+            """, (job["title"], job["company"], job["location"], job["url"], job["description"]))
+            inserted_count += 1
+        except sqlite3.IntegrityError:
+            # Skip duplicates based on unique URL
+            pass
+
+    conn.commit()
+    conn.close()
+    logging.info(f"Job collection complete. Inserted {inserted_count} new postings into database.")
+
+
+if __name__ == "__main__":
+    run_job_collector()

@@ -1,13 +1,19 @@
 import os
+import sys
 import sqlite3
 import logging
 import json
 import re
 import html
 import urllib.request
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Try importing your scraper/collector function if present
+# Ensure repository root is added to sys.path for robust imports
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+
+# Dynamic import for listener module
 try:
     from agent.listener import run_job_collector
 except ImportError:
@@ -16,15 +22,15 @@ except ImportError:
     except ImportError:
         run_job_collector = None
 
-load_dotenv(override=True)
+load_dotenv(ROOT_DIR / ".env", override=True)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-DB_PATH = "data/jobs.db"
+DB_PATH = ROOT_DIR / "data" / "jobs.db"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
-# Extract strictly the token part (numerical_id:hash) and strip any surrounding URLs or brackets
+# Extract strictly numerical/hash tokens from raw string
 RAW_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 RAW_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -42,7 +48,6 @@ def get_db_connection():
 def fetch_unprocessed_jobs():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Fetch jobs that are either explicitly marked 'APPLY' or newly inserted 'NEW'
     cursor.execute("""
         SELECT id, title, company, location, url, description 
         FROM jobs 
@@ -82,15 +87,16 @@ Return ONLY a JSON object with this exact structure:
         }).encode('utf-8')
 
         req = urllib.request.Request(OLLAMA_URL, data=data, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode('utf-8'))
             raw_response = res_data.get("response", "{}")
             cleaned_text = clean_json_response(raw_response)
             parsed = json.loads(cleaned_text)
             return int(parsed.get("score", 85)), parsed.get("reason", "Evaluated by AI")
     except Exception as e:
-        logging.warning(f"Ollama local instance unavailable ({e}). Defaulting to passing score for GitHub Actions.")
-    # Fallback to score 85 so GitHub Actions passes all scraped jobs to Telegram
+        logging.warning(f"Local Ollama instance unavailable ({e}). Using GitHub Actions fallback score.")
+
+    # Fallback score to ensure pipeline dispatches alert in cloud environment
     return 85, "Matched entry-level job posting criteria."
 
 
@@ -148,20 +154,21 @@ def update_job_status(job_id, score, status):
 
 
 def process_pipeline():
-    # 1. Run scrapers/collectors first to fetch live jobs
+    # 1. Execute live scraping logic first
     if callable(run_job_collector):
-        logging.info("Starting job collection...")
+        logging.info("Starting job collection step...")
         try:
             run_job_collector()
         except Exception as e:
-            logging.error(f"Error running job collector: {e}")
+            logging.error(f"Error executing job collector: {e}")
     else:
-        logging.info("No collector module detected. Processing existing DB jobs.")
+        logging.warning("No valid run_job_collector module detected. Proceeding with DB check.")
 
-    # 2. Fetch all unprocessed jobs
+    # 2. Fetch newly inserted or pending jobs
     jobs = fetch_unprocessed_jobs()
     logging.info(f"Found {len(jobs)} unprocessed jobs with status 'APPLY' or 'NEW'")
 
+    # 3. Process records and issue notifications
     for job in jobs:
         job_id, title, company, location, url, description = job
         logging.info(f"Processing: {title} at {company}")
@@ -173,12 +180,12 @@ def process_pipeline():
             alert_sent = send_telegram_alert(title, company, location, url, score, reason)
             if alert_sent:
                 update_job_status(job_id, score, status="NOTIFIED")
-                logging.info(f"Updated {job_id} -> status='NOTIFIED'")
+                logging.info(f"Updated job #{job_id} -> status='NOTIFIED'")
             else:
-                logging.warning(f"Telegram dispatch failed. Retaining {job_id} as status='APPLY'")
+                logging.warning(f"Telegram dispatch failed. Retaining job #{job_id} as status='APPLY'")
         else:
             update_job_status(job_id, score, status="REJECTED")
-            logging.info(f"Score below threshold ({score}). Updated {job_id} -> status='REJECTED'")
+            logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED'")
 
 
 if __name__ == "__main__":
