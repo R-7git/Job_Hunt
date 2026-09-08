@@ -8,7 +8,7 @@ if PROJECT_ROOT not in sys.path:
 
 from agent.job_matcher import evaluate_job_match
 
-DB_PATH = "data/jobs.db"
+DB_PATH = os.getenv("DB_PATH", "data/jobs.db")
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)

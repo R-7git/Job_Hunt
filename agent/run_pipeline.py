@@ -11,7 +11,7 @@ from agent.ats_collector import fetch_all_jobs
 
 dotenv.load_dotenv()
 
-DB_PATH = Path("data/jobs.db")
+DB_PATH = os.getenv("DB_PATH", "data/jobs.db")
 PROFILE_PATH = Path("data/profile.json")
 
 

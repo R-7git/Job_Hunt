@@ -9,7 +9,7 @@ if PROJECT_ROOT not in sys.path:
 from agent.telegram_notify import send_telegram_alert
 from agent.job_matcher import clean_html
 
-DB_PATH = "data/jobs.db"
+DB_PATH = os.getenv("DB_PATH", "data/jobs.db")
 OUTPUT_DIR = "applications"
 
 def generate_tailored_materials(title, company, description):

@@ -5,7 +5,7 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-DB_PATH = Path(__file__).parent.parent / "data" / "jobs.db"
+DB_PATH = os.getenv("DB_PATH", "data/jobs.db")
 
 
 def init_db():
