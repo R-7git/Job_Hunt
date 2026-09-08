@@ -26,26 +26,30 @@ load_dotenv(ROOT_DIR / ".env", override=True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DB_PATH = ROOT_DIR / "data" / "jobs.db"
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-
-# Sanitize Telegram Tokens completely (strip brackets, quotes, whitespace)
-RAW_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-RAW_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
-token_match = re.search(r'(\d+:[A-Za-z0-9_-]+)', RAW_TOKEN)
-TOKEN = token_match.group(1) if token_match else RAW_TOKEN.strip("[]'\"")
-
-chat_match = re.search(r'(-?\d+)', RAW_CHAT_ID)
-CHAT_ID = chat_match.group(1) if chat_match else RAW_CHAT_ID.strip("[]'\"")
-
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH)
 
+def clean_telegram_token(raw_token):
+    if not raw_token:
+        return ""
+    # Strip any brackets, quotes, whitespace, or url prefixes
+    token = re.sub(r'[\[\]\'"]', '', raw_token).strip()
+    match = re.search(r'(\d+:[A-Za-z0-9_-]+)', token)
+    return match.group(1) if match else token
+
+def clean_telegram_chat_id(raw_chat_id):
+    if not raw_chat_id:
+        return ""
+    chat_id = re.sub(r'[\[\]\'"]', '', raw_chat_id).strip()
+    match = re.search(r'(-?\d+)', chat_id)
+    return match.group(1) if match else chat_id
+
+TOKEN = clean_telegram_token(os.getenv("TELEGRAM_BOT_TOKEN", ""))
+CHAT_ID = clean_telegram_chat_id(os.getenv("TELEGRAM_CHAT_ID", ""))
 
 def init_db():
-    """Ensure table structure exists and fix NULL IDs."""
+    """Ensure table structure exists and primary key sequence is enforced."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -66,9 +70,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def fetch_unprocessed_jobs():
-    """Fetch unprocessed jobs using rowid fallback to eliminate [NULL] IDs."""
+    """Fetch unprocessed jobs using rowid to ensure valid job IDs."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -80,16 +83,7 @@ def fetch_unprocessed_jobs():
     conn.close()
     return rows
 
-
-def clean_json_response(text):
-    text = re.sub(r'^```json\s*', '', text, flags=re.MULTILINE)
-    text = re.sub(r'^```\s*', '', text, flags=re.MULTILINE)
-    text = re.sub(r'```$', '', text, flags=re.MULTILINE)
-    return text.strip()
-
-
-def evaluate_job_with_ollama(title, company, location, description):
-    # Rule-based filtering to bypass local Ollama timeouts in GitHub Actions
+def evaluate_job(title, company, location):
     title_lower = (title or "").lower()
     loc_lower = (location or "").lower()
 
@@ -107,7 +101,6 @@ def evaluate_job_with_ollama(title, company, location, description):
         return 0, "Rejected: Non-remote role outside target region (e.g. New York/US)."
 
     return 0, "Rejected: Role/Location does not match target Data Engineering criteria."
-
 
 def send_telegram_alert(job_id, title, company, location, url, score, reason):
     if not TOKEN or not CHAT_ID:
@@ -131,8 +124,7 @@ def send_telegram_alert(job_id, title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
-    # Pure URL string without any brackets or markdown tags
-    endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
+    endpoint = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
         "text": message,
@@ -151,7 +143,6 @@ def send_telegram_alert(job_id, title, company, location, url, score, reason):
         return False
     return False
 
-
 def update_job_eval(job_id, score, reason, status):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -162,7 +153,6 @@ def update_job_eval(job_id, score, reason, status):
     """, (score, reason, status, job_id))
     conn.commit()
     conn.close()
-
 
 def process_pipeline():
     init_db()
@@ -178,24 +168,23 @@ def process_pipeline():
     logging.info(f"Found {len(jobs)} unprocessed jobs with status 'APPLY' or 'NEW'")
 
     for job in jobs:
-        job_id, title, company, location, url, description = job
+        job_id, title, company, location, url, _ = job
         logging.info(f"Processing Job #{job_id}: {title} at {company} ({location})")
 
-        score, reason = evaluate_job_with_ollama(title, company, location, description)
+        score, reason = evaluate_job(title, company, location)
         logging.info(f"Evaluation -> Score: {score} | Reason: {reason}")
 
         if score >= 60:
             alert_sent = send_telegram_alert(job_id, title, company, location, url, score, reason)
             if alert_sent:
                 update_job_eval(job_id, score, reason, status="NOTIFIED")
-                logging.info(f"Updated job #{job_id} -> status='NOTIFIED', match_score={score}")
+                logging.info(f"Updated job #{job_id} -> status='NOTIFIED'")
             else:
                 update_job_eval(job_id, score, reason, status="APPLY")
-                logging.warning(f"Telegram dispatch failed. Retaining job #{job_id} as status='APPLY'")
+                logging.warning(f"Telegram dispatch failed for Job #{job_id}")
         else:
             update_job_eval(job_id, score, reason, status="REJECTED")
             logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED'")
-
 
 if __name__ == "__main__":
     process_pipeline()
