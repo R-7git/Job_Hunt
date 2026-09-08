@@ -11,7 +11,7 @@ from agent.ats_collector import fetch_all_jobs
 
 dotenv.load_dotenv()
 
-DB_PATH = os.getenv("DB_PATH", "data/jobs.db")
+DB_PATH = Path(os.getenv("DB_PATH", "data/jobs.db"))
 PROFILE_PATH = Path("data/profile.json")
 
 
@@ -205,3 +205,19 @@ def fetch_and_evaluate():
 
 if __name__ == "__main__":
     fetch_and_evaluate()
+
+def prune_old_rejected_jobs():
+    """Wipes heavy text descriptions for REJECTED jobs older than 30 days to save cloud space without breaking scraper deduplication."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE jobs 
+            SET description = NULL 
+            WHERE status = "REJECTED" 
+              AND scouted_at < datetime("now", "-30 days")
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Cleanup warning: {e}")
