@@ -1,43 +1,58 @@
 import os
+import re
 import requests
-from dotenv import load_dotenv
+import dotenv
 
-load_dotenv(override=True)
+dotenv.load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+def send_job_alerts(matched_jobs: list):
+    raw_token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN") or ""
+    chat_id = os.getenv("TELEGRAM_CHAT_ID") or ""
 
-def send_telegram_alert(title: str, company: str, location: str, url: str, score: int, reason: str):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[Telegram Debug] Credentials missing from .env context.")
-        return False
+    # Strip whitespace, quotes, and accidental "bot" prefixes
+    token = raw_token.strip().strip("'").strip('"')
+    if token.lower().startswith("bot"):
+        token = token[3:]
 
-    message = f"""🎯 *NEW ENTRY-LEVEL DE MATCH*
+    chat_id = chat_id.strip().strip("'").strip('"')
 
-🏢 *Company:* {company}
-📌 *Role:* {title}
-📍 *Location:* {location}
-⭐ *Match Score:* {score}/100
-💡 *Reason:* {reason}
+    if not token or not chat_id:
+        print("⚠️ Telegram credentials missing. Skipping notification.")
+        return
 
-🔗 [View Job Posting]({url})"""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
 
-    endpoint = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": False
-    }
+    for job in matched_jobs:
+        title = job.get("title")
+        company = job.get("company")
+        location = job.get("location")
+        job_url = job.get("url")
+        fit_score = job.get("fit_score")
+        match_reason = job.get("match_reason")
 
-    try:
-        res = requests.post(endpoint, json=payload, timeout=10)
-        if res.status_code == 200:
-            print(f"Telegram notification sent for {title} at {company}")
-            return True
-        else:
-            print(f"Telegram API Error ({res.status_code}): {res.text}")
-            return False
-    except Exception as e:
-        print(f"[Telegram Exception] {e}")
-        return False
+        message = (
+            f"🎯 *NEW FRESHER JOB MATCH!*\n\n"
+            f"📌 *Role:* {title}\n"
+            f"🏢 *Company:* {company}\n"
+            f"📍 *Location:* {location}\n"
+            f"⚡ *Fit Score:* {fit_score}%\n"
+            f"💡 *Reasons:* {match_reason}\n\n"
+            f"🔗 [Apply Here]({job_url})"
+        )
+
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": False
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=10)
+            if resp.status_code == 200:
+                print(f"✅ Telegram alert sent: {title} @ {company}")
+            else:
+                print(f"❌ Telegram Error ({resp.status_code}): {resp.text}")
+                print(f"   [Debug URL Used]: https://api.telegram.org/bot{token[:5]}.../sendMessage")
+        except Exception as e:
+            print(f"❌ Notification Error: {e}")

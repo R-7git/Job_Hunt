@@ -1,190 +1,159 @@
-import os
-import sys
-import sqlite3
-import logging
 import json
-import re
-import html
-import urllib.request
-import urllib.error
+import os
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
-from dotenv import load_dotenv
+import dotenv
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+dotenv.load_dotenv()
 
-try:
-    from agent.listener import run_job_collector
-except ImportError:
-    try:
-        from listener import run_job_collector
-    except ImportError:
-        run_job_collector = None
-
-load_dotenv(ROOT_DIR / ".env", override=True)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-DB_PATH = ROOT_DIR / "data" / "jobs.db"
-
-def get_db_connection():
-    return sqlite3.connect(DB_PATH)
-
-def clean_telegram_token(raw_token):
-    if not raw_token:
-        return ""
-    # Strip any brackets, quotes, whitespace, or url prefixes
-    token = re.sub(r'[\[\]\'"]', '', raw_token).strip()
-    match = re.search(r'(\d+:[A-Za-z0-9_-]+)', token)
-    return match.group(1) if match else token
-
-def clean_telegram_chat_id(raw_chat_id):
-    if not raw_chat_id:
-        return ""
-    chat_id = re.sub(r'[\[\]\'"]', '', raw_chat_id).strip()
-    match = re.search(r'(-?\d+)', chat_id)
-    return match.group(1) if match else chat_id
-
-TOKEN = clean_telegram_token(os.getenv("TELEGRAM_BOT_TOKEN", ""))
-CHAT_ID = clean_telegram_chat_id(os.getenv("TELEGRAM_CHAT_ID", ""))
+DB_PATH = Path("data/jobs.db")
+PROFILE_PATH = Path("data/profile.json")
 
 def init_db():
-    """Ensure table structure exists and primary key sequence is enforced."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             title TEXT,
             company TEXT,
             location TEXT,
-            url TEXT UNIQUE,
-            description TEXT,
+            url TEXT,
             source TEXT,
-            match_score INTEGER,
+            summary TEXT,
+            fit_score REAL,
             match_reason TEXT,
-            status TEXT DEFAULT 'NEW',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            scouted_at TEXT
         )
     """)
     conn.commit()
     conn.close()
 
-def fetch_unprocessed_jobs():
-    """Fetch unprocessed jobs using rowid to ensure valid job IDs."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT COALESCE(id, rowid) AS job_id, title, company, location, url, description 
-        FROM jobs 
-        WHERE status IN ('NEW', 'APPLY')
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+def load_profile():
+    if not PROFILE_PATH.exists():
+        return {}
+    with open(PROFILE_PATH, "r") as f:
+        return json.load(f)
 
-def evaluate_job(title, company, location):
-    title_lower = (title or "").lower()
+def is_excluded(title: str, summary: str) -> tuple[bool, str]:
+    title_lower = title.lower()
+    summary_lower = (summary or "").lower()
+
+    # Immediate Exclusions: Senior roles or non-target tech stack (Java)
+    senior_terms = ["senior", "sr.", "sr ", "lead", "staff", "principal", "architect", "manager", "director", "head of", "vp"]
+    if any(s in title_lower for s in senior_terms):
+        return True, "Excluded: Senior/Lead Role"
+
+    if "java" in title_lower or "java developer" in summary_lower:
+        return True, "Excluded: Java Tech Stack"
+
+    return False, ""
+
+def evaluate_job(title: str, location: str, summary: str, profile: dict) -> tuple[float, str]:
+    title_lower = title.lower()
     loc_lower = (location or "").lower()
+    summary_lower = (summary or "").lower()
 
-    valid_roles = ["data engineer", "etl", "snowflake", "sql", "data platform", "pipeline"]
-    valid_locations = ["remote", "anywhere", "worldwide", "india", "work from home", "bengaluru", "bangalore"]
-    invalid_locations = ["new york", "ny", "san francisco", "london", "uk", "us", "united states", "hybrid"]
+    # Target Keywords for Data Eng / SQL / Snowflake / ETL
+    target_keywords = [
+        "data engineer", "data engineering", "sql", "snowflake", 
+        "etl", "elt", "data pipeline", "analytics engineer", 
+        "data warehouse", "bi engineer"
+    ]
+    title_matched = any(kw in title_lower for kw in target_keywords)
 
-    matches_role = any(r in title_lower for r in valid_roles)
-    is_disqualified_location = any(loc in loc_lower for loc in invalid_locations) and not any(r in loc_lower for r in ["remote", "india"])
-    matches_valid_location = any(l in loc_lower for l in valid_locations)
+    if not title_matched:
+        return 0.0, "Title not matching target fresher roles."
 
-    if matches_role and matches_valid_location and not is_disqualified_location:
-        return 85, "Matched target remote/Bengaluru DE/ETL/SQL fresher criteria."
-    elif matches_role and is_disqualified_location:
-        return 0, "Rejected: Non-remote role outside target region (e.g. New York/US)."
+    score = 60.0
+    reasons = ["Matched target data domain."]
 
-    return 0, "Rejected: Role/Location does not match target Data Engineering criteria."
+    # Check candidate skills
+    skills_to_check = ["sql", "snowflake", "etl", "python", "aws", "s3", "azure", "adf", "dbt", "pyspark", "airflow"]
+    matched_skills = [skill for skill in skills_to_check if skill in summary_lower or skill in title_lower]
 
-def send_telegram_alert(job_id, title, company, location, url, score, reason):
-    if not TOKEN or not CHAT_ID:
-        logging.error(f"Missing Credentials -> TOKEN: '{TOKEN}' | CHAT_ID: '{CHAT_ID}'")
-        return False
+    if matched_skills:
+        score += min(len(matched_skills) * 5, 30)
+        reasons.append(f"Skills: {', '.join(matched_skills[:5])}")
 
-    clean_title = html.escape(str(title or "N/A"))
-    clean_company = html.escape(str(company or "N/A"))
-    clean_location = html.escape(str(location or "N/A"))
-    clean_reason = html.escape(str(reason or "N/A"))
-    clean_url = html.escape(str(url or ""))
+    if any(e in title_lower or e in summary_lower for e in ["entry", "fresher", "junior", "associate", "intern", "trainee"]):
+        score += 10
+        reasons.append("Fresher/Entry level indicator found.")
 
-    message = (
-        f"🎯 <b>New Job Match Found!</b>\n\n"
-        f"<b>Job ID:</b> #{job_id}\n"
-        f"<b>Role:</b> {clean_title}\n"
-        f"<b>Company:</b> {clean_company}\n"
-        f"<b>Location:</b> {clean_location}\n"
-        f"<b>Score:</b> {score}/100\n"
-        f"<b>Reason:</b> {clean_reason}\n\n"
-        f'🔗 <a href="{clean_url}">Apply Here</a>'
-    )
+    return round(score, 2), " | ".join(reasons)
 
-    endpoint = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = json.dumps({
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    }).encode('utf-8')
+def fetch_and_evaluate():
+    init_db()
+    profile = load_profile()
 
-    try:
-        req = urllib.request.Request(endpoint, data=payload, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            if response.status == 200:
-                logging.info(f"Telegram alert delivered for Job #{job_id}: {title}")
-                return True
-    except Exception as e:
-        logging.error(f"Telegram request failed for Job #{job_id}: {e}")
-        return False
-    return False
+    from agent.ats_collector import fetch_all_jobs
+    fetched_jobs = fetch_all_jobs()
 
-def update_job_eval(job_id, score, reason, status):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE jobs 
-        SET match_score = ?, match_reason = ?, status = ? 
-        WHERE COALESCE(id, rowid) = ?
-    """, (score, reason, status, job_id))
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    new_matches = []
+    processed_ids = set()
+
+    print(f"\n--- Scraped {len(fetched_jobs)} total job postings ---")
+
+    for job in fetched_jobs:
+        job_id = str(job.get("id"))
+        if not job_id or job_id in processed_ids:
+            continue
+        processed_ids.add(job_id)
+
+        title = job.get("title", "")
+        company = job.get("company", "")
+        location = job.get("location", "Remote")
+        url = job.get("url", "")
+        source = job.get("source", "ATS")
+        summary = job.get("summary", "")
+
+        # Step 1: Immediate Fast-Fail Pre-Filter (Drops Senior and Java jobs instantly)
+        excluded, reason = is_excluded(title, summary)
+        if excluded:
+            print(f"[{source}] {company} - {title} => SKIPPED ({reason})")
+            continue
+
+        # Step 2: Database Deduplication Check
+        cur.execute("SELECT id FROM jobs WHERE id = ?", (job_id,))
+        if cur.fetchone():
+            continue
+
+        # Step 3: Evaluate & Score
+        fit_score, match_reason = evaluate_job(title, location, summary, profile)
+
+        cur.execute("""
+            INSERT OR IGNORE INTO jobs (id, title, company, location, url, source, summary, fit_score, match_reason, scouted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            job_id, title, company, location, url, source, summary, fit_score, match_reason,
+            datetime.now(timezone.utc).isoformat()
+        ))
+
+        print(f"[{source}] {company} - {title} => Score: {fit_score} ({match_reason})")
+
+        if fit_score >= 50.0:
+            new_matches.append({
+                "title": title,
+                "company": company,
+                "location": location,
+                "url": url,
+                "fit_score": fit_score,
+                "match_reason": match_reason
+            })
+
     conn.commit()
     conn.close()
 
-def process_pipeline():
-    init_db()
+    print(f"\nPipeline execution complete: {len(new_matches)} qualified fresher matches found.")
 
-    if callable(run_job_collector):
-        logging.info("Starting job collection step...")
-        try:
-            run_job_collector()
-        except Exception as e:
-            logging.error(f"Error executing job collector: {e}")
-
-    jobs = fetch_unprocessed_jobs()
-    logging.info(f"Found {len(jobs)} unprocessed jobs with status 'APPLY' or 'NEW'")
-
-    for job in jobs:
-        job_id, title, company, location, url, _ = job
-        logging.info(f"Processing Job #{job_id}: {title} at {company} ({location})")
-
-        score, reason = evaluate_job(title, company, location)
-        logging.info(f"Evaluation -> Score: {score} | Reason: {reason}")
-
-        if score >= 60:
-            alert_sent = send_telegram_alert(job_id, title, company, location, url, score, reason)
-            if alert_sent:
-                update_job_eval(job_id, score, reason, status="NOTIFIED")
-                logging.info(f"Updated job #{job_id} -> status='NOTIFIED'")
-            else:
-                update_job_eval(job_id, score, reason, status="APPLY")
-                logging.warning(f"Telegram dispatch failed for Job #{job_id}")
-        else:
-            update_job_eval(job_id, score, reason, status="REJECTED")
-            logging.info(f"Score below threshold ({score}). Updated job #{job_id} -> status='REJECTED'")
+    if new_matches:
+        from agent.telegram_notify import send_job_alerts
+        send_job_alerts(new_matches)
 
 if __name__ == "__main__":
-    process_pipeline()
+    fetch_and_evaluate()
