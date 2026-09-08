@@ -30,15 +30,15 @@ DB_PATH = ROOT_DIR / "data" / "jobs.db"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
-# Extract strictly numerical/hash tokens from raw string
+# Clean token and chat ID of any extra quotes, brackets, or spaces
 RAW_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 RAW_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 token_match = re.search(r'(\d+:[A-Za-z0-9_-]+)', RAW_TOKEN)
-TOKEN = token_match.group(1) if token_match else re.sub(r'[^a-zA-Z0-9:\-_]', '', RAW_TOKEN)
+TOKEN = token_match.group(1) if token_match else RAW_TOKEN.strip("[]'\"")
 
 chat_match = re.search(r'(-?\d+)', RAW_CHAT_ID)
-CHAT_ID = chat_match.group(1) if chat_match else re.sub(r'[^a-zA-Z0-9_\-]', '', RAW_CHAT_ID)
+CHAT_ID = chat_match.group(1) if chat_match else RAW_CHAT_ID.strip("[]'\"")
 
 
 def get_db_connection():
@@ -121,6 +121,7 @@ def send_telegram_alert(title, company, location, url, score, reason):
         f'🔗 <a href="{clean_url}">Apply Here</a>'
     )
 
+    # Clean endpoint URL string without Markdown formatting artifacts
     endpoint = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
