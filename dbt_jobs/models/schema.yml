@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: stg_jobs
+    description: "Filtered base view based on target variables."
+    columns:
+      - name: job_id
+        tests:
+          - unique
+          - not_null
+      - name: title
+        tests:
+          - not_null
+      - name: url
+        tests:
+          - not_null
+
+  - name: dim_active_target_jobs
+    description: "Isolated view for target role, experience, and remote criteria."
+    columns:
+      - name: job_id
+        tests:
+          - unique
+          - not_null
