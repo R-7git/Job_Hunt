@@ -48,8 +48,8 @@ jobs:
 
       - name: Run dbt Transformations
         run: |
-          dbt run --project-dir dbt_jobs --profiles-dir ~/.dbt
+          dbt --no-send-anonymous-usage-stats run --project-dir dbt_jobs --profiles-dir ~/.dbt
 
       - name: Run dbt Data Quality Tests
         run: |
-          dbt test --project-dir dbt_jobs --profiles-dir ~/.dbt
+          dbt --no-send-anonymous-usage-stats test --project-dir dbt_jobs --profiles-dir ~/.dbt
