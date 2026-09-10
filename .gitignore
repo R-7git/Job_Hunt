@@ -10,7 +10,7 @@ applications/*.md
 .DS_Store
 .pm2/
 
-# Environment variables
-.envdata/*.db
-data/jobs.db
+# Environment variables & Local DBs
+.env
+data/*.db
 *.db
