@@ -38,9 +38,10 @@ jobs:
             outputs:
               dev:
                 type: sqlite
+                database: 'main'
+                schema: 'main'
                 schemas_and_paths:
                   main: 'data/jobs.db'
-                schema: 'main'
                 threads: 1
           PROFILE_EOF
 
