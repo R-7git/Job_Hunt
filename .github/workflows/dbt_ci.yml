@@ -1,0 +1,83 @@
+name: dbt CI Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'dbt_jobs/**'
+      - 'main.py'
+      - '.github/workflows/dbt_ci.yml'
+
+jobs:
+  dbt-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies & Patch Adapter
+        run: |
+          python -m pip install --upgrade pip
+          pip install "dbt-core<1.8.0" dbt-sqlite
+          
+          # Patch host attribute bug in dbt-sqlite
+          python -c '
+          import pathlib
+          import dbt.adapters.sqlite.connections as conn
+          path = pathlib.Path(conn.__file__)
+          path.write_text(path.read_text().replace("return self.host", "return \"localhost\""))
+          '
+
+      - name: Seed Mock Database Schema & Profiles
+        run: |
+          mkdir -p data
+          
+          # Create empty jobs source table so dbt views and tests can compile
+          python -c '
+          import sqlite3
+          conn = sqlite3.connect("data/jobs.db")
+          conn.execute("""
+              CREATE TABLE IF NOT EXISTS jobs (
+                  id TEXT PRIMARY KEY,
+                  title TEXT,
+                  company TEXT,
+                  location TEXT,
+                  url TEXT,
+                  source TEXT,
+                  summary TEXT,
+                  fit_score REAL,
+                  match_reason TEXT,
+                  status TEXT,
+                  scouted_at TEXT
+              )
+          """)
+          conn.close()
+          '
+
+          mkdir -p ~/.dbt
+          cat << 'PROFILE_EOF' > ~/.dbt/profiles.yml
+          dbt_jobs:
+            target: dev
+            outputs:
+              dev:
+                type: sqlite
+                database: 'main'
+                schema: 'main'
+                schema_directory: 'data'
+                schemas_and_paths:
+                  main: 'data/jobs.db'
+                threads: 1
+          PROFILE_EOF
+
+      - name: Run dbt Transformations
+        run: dbt run --project-dir dbt_jobs --profiles-dir ~/.dbt
+
+      - name: Run dbt Data Quality Tests
+        run: dbt test --project-dir dbt_jobs --profiles-dir ~/.dbt
