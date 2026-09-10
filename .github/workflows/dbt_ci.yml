@@ -22,10 +22,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Dependencies
+      - name: Install Dependencies & Force Patch Bug
         run: |
           python -m pip install --upgrade pip
           pip install "dbt-core<1.8.0" dbt-sqlite
+          
+          # Force patch the broken source code directly in the CI runner
+          python -c '
+          import pathlib
+          import dbt.adapters.sqlite.connections as conn
+          path = pathlib.Path(conn.__file__)
+          path.write_text(path.read_text().replace("return self.host", "return \"localhost\""))
+          '
 
       - name: Create Mock Database Directory & Profiles
         run: |
@@ -38,7 +46,6 @@ jobs:
             outputs:
               dev:
                 type: sqlite
-                host: 'localhost'
                 database: 'main'
                 schema: 'main'
                 schema_directory: 'data'
@@ -48,9 +55,7 @@ jobs:
           PROFILE_EOF
 
       - name: Run dbt Transformations
-        run: |
-          dbt run --project-dir dbt_jobs --profiles-dir ~/.dbt
+        run: dbt run --project-dir dbt_jobs --profiles-dir ~/.dbt
 
       - name: Run dbt Data Quality Tests
-        run: |
-          dbt test --project-dir dbt_jobs --profiles-dir ~/.dbt
+        run: dbt test --project-dir dbt_jobs --profiles-dir ~/.dbt
