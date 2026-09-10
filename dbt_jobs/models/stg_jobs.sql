@@ -23,7 +23,7 @@ select
 from raw_data
 where 1=1
 
-    -- Target Role Keywords
+    -- 1. Target Role Keywords
     {% if role == 'Data Engineering' %}
         and (
             lower(title) like '%data engineer%' 
@@ -36,30 +36,21 @@ where 1=1
         )
     {% endif %}
 
-    -- Strict Fresher Logic (With Negative Keywords)
+    -- 2. Experience Exclusion Logic (Block Senior Roles, Allow Standard/Fresher Roles)
     {% if exp == 'Fresher' %}
-        and (
-            lower(title) like '%fresher%' 
-            or lower(title) like '%entry%' 
-            or lower(title) like '%junior%' 
-            or lower(title) like '%associate%'
-            or lower(title) like '%intern %'
-            or lower(title) like '% intern%'
-            or lower(title) like '%trainee%'
-            or lower(summary) like '%0-1 year%' 
-            or lower(summary) like '%0 to 1 year%'
-            or lower(summary) like '%recent grad%'
-        )
-        -- Exclude Senior/Lead Roles
         and lower(title) not like '%senior%'
         and lower(title) not like '%sr.%'
+        and lower(title) not like '%sr %'
         and lower(title) not like '%principal%'
         and lower(title) not like '%lead%'
         and lower(title) not like '%staff%'
         and lower(title) not like '%manager%'
+        and lower(title) not like '%director%'
+        and lower(title) not like '%vp %'
+        and lower(title) not like '%head of%'
     {% endif %}
 
-    -- Strict Remote Logic
+    -- 3. Remote Logic
     {% if remote %}
         and (
             lower(location) like '%remote%' 
