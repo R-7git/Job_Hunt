@@ -40,6 +40,7 @@ jobs:
                 type: sqlite
                 database: 'main'
                 schema: 'main'
+                schema_directory: 'data'
                 schemas_and_paths:
                   main: 'data/jobs.db'
                 threads: 1
